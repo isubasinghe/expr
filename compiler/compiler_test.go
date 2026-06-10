@@ -398,7 +398,8 @@ func TestCompile(t *testing.T) {
 		},
 	}
 
-	for _, test := range tests {
+	for i := range tests {
+		test := &tests[i]
 		t.Run(test.code, func(t *testing.T) {
 			program, err := expr.Compile(test.code, expr.Env(Env{}), expr.Optimize(false))
 			require.NoError(t, err)

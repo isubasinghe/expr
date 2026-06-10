@@ -41,6 +41,12 @@ type VM struct {
 	Scopes       []*Scope
 	Variables    []any
 	MemoryBudget uint
+	// Fuel limits the worst-case number of instructions a run may execute.
+	// Zero means unlimited. The whole program is charged once upfront, and
+	// each loop iteration is charged its worst-case cost when the backedge
+	// is taken, so the bound is conservative: a run may be rejected even if
+	// the cheaper path through a branch would have stayed within budget.
+	Fuel         uint
 	ip           int
 	memory       uint
 	debug        bool
@@ -55,7 +61,7 @@ func (vm *VM) Run(program *Program, env any) (_ any, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			var location file.Location
-			if vm.ip-1 < len(program.locations) {
+			if vm.ip >= 1 && vm.ip-1 < len(program.locations) {
 				location = program.locations[vm.ip-1]
 			}
 			f := &file.Error{
@@ -89,6 +95,18 @@ func (vm *VM) Run(program *Program, env any) (_ any, err error) {
 	}
 	vm.memory = 0
 	vm.ip = 0
+
+	var fuelCost []int
+	var fuelLeft uint
+	if vm.Fuel > 0 {
+		fuelCost = program.backedgeFuelCost()
+		// Without a backedge no instruction runs twice, so the program
+		// length covers all straight-line execution upfront.
+		if uint(len(program.Bytecode)) > vm.Fuel {
+			panic("fuel budget exceeded")
+		}
+		fuelLeft = vm.Fuel - uint(len(program.Bytecode))
+	}
 
 	var fnArgsBuf []any
 
@@ -231,6 +249,13 @@ func (vm *VM) Run(program *Program, env any) (_ any, err error) {
 			}
 
 		case OpJumpBackward:
+			if fuelCost != nil {
+				cost := uint(fuelCost[vm.ip-1])
+				if cost > fuelLeft {
+					panic("fuel budget exceeded")
+				}
+				fuelLeft -= cost
+			}
 			vm.ip -= arg
 
 		case OpIn:

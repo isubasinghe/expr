@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
+	"sync"
 	"text/tabwriter"
 
 	"github.com/expr-lang/expr/ast"
@@ -28,6 +29,24 @@ type Program struct {
 	functions []Function
 	debugInfo map[string]string
 	span      *Span
+
+	fuelOnce     sync.Once
+	backedgeCost []int
+}
+
+// backedgeFuelCost returns, for every OpJumpBackward instruction, the fuel
+// charged when the backedge is taken: the worst-case instruction count of
+// one loop iteration. Computed once; a program may be shared by many VMs.
+func (program *Program) backedgeFuelCost() []int {
+	program.fuelOnce.Do(func() {
+		cfg := AnalyzeCFG(program)
+		cost := make([]int, len(program.Bytecode))
+		for l := range cfg.Loops {
+			cost[cfg.Loops[l].Backedge] = cfg.PerIterationCost(l)
+		}
+		program.backedgeCost = cost
+	})
+	return program.backedgeCost
 }
 
 // NewProgram returns a new Program. It's used by the compiler.
